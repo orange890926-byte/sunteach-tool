@@ -1,0 +1,865 @@
+# Build a single-file interactive HTML dashboard for After-School Care Teachers (安親班老師班級管理系統)
+# It will include:
+# 1. Student Status & Attendance (未到班 / 已到班 / 寫作業中 / 才藝班中 / 已離班)
+# 2. Talent Class & Pickup Schedule (才藝班與接送提醒: 英文、游泳等，設定接送時間、接送老師、提醒通知)
+# 3. Homework & Correction Tracker (今日作業、批改、訂正)
+# 4. Parent Notes & Reminders (家長特別交代、吃藥/提早接提醒)
+# 5. Point & Reward System (點數獎勵)
+# 6. Teacher Toolkit (隨機抽籤器、課堂倒數計時器)
+# 7. LocalStorage saving + Export/Import JSON data for GitHub Pages hosting (100% frontend static, no backend required)
+
+html_content = '''<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安親班導師智慧管理系統 | Class Care Dashboard</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Vue 3 (Options API / SFC syntax light) -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        [v-cloak] { display: none; }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(8px);
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
+
+<div id="app" v-cloak class="pb-12">
+    <!-- Header / Navbar -->
+    <header class="bg-indigo-600 text-white shadow-md sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <i data-lucide="graduated-cap" class="w-8 h-8 text-amber-300"></i>
+                <div>
+                    <h1 class="text-xl font-bold tracking-wide">安親班班級管理 Dashboard</h1>
+                    <p class="text-xs text-indigo-200">{{ todayDate }} | 今日班級概況</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-2 sm:space-x-4">
+                <!-- Data Backup / Restore -->
+                <button @click="exportData" class="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-xs sm:text-sm rounded-lg transition flex items-center gap-1">
+                    <i data-lucide="download" class="w-4 h-4"></i> 備份資料
+                </button>
+                <label class="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-xs sm:text-sm rounded-lg transition cursor-pointer flex items-center gap-1">
+                    <i data-lucide="upload" class="w-4 h-4"></i> 還原
+                    <input type="file" @change="importData" class="hidden" accept=".json">
+                </label>
+                <button @click="openModal('addStudent')" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 font-semibold text-xs sm:text-sm rounded-lg transition flex items-center gap-1 shadow">
+                    <i data-lucide="user-plus" class="w-4 h-4"></i> 新增學生
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Top Overview Stats Banner -->
+        <div class="lg:col-span-12 grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-500 font-medium">總學生數</div>
+                    <div class="text-2xl font-bold text-slate-800">{{ students.length }} 人</div>
+                </div>
+                <div class="p-2.5 bg-indigo-50 text-indigo-600 rounded-lg"><i data-lucide="users" class="w-6 h-6"></i></div>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-500 font-medium">今日已到班</div>
+                    <div class="text-2xl font-bold text-emerald-600">{{ countStatus('已到班') + countStatus('寫作業中') + countStatus('才藝班中') }} 人</div>
+                </div>
+                <div class="p-2.5 bg-emerald-50 text-emerald-600 rounded-lg"><i data-lucide="user-check" class="w-6 h-6"></i></div>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-500 font-medium">今日才藝班接送</div>
+                    <div class="text-2xl font-bold text-purple-600">{{ totalTalentClassesToday }} 堂</div>
+                </div>
+                <div class="p-2.5 bg-purple-50 text-purple-600 rounded-lg"><i data-lucide="bus" class="w-6 h-6"></i></div>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-500 font-medium">待辦事項/交代</div>
+                    <div class="text-2xl font-bold text-amber-600">{{ pendingReminders.length }} 項</div>
+                </div>
+                <div class="p-2.5 bg-amber-50 text-amber-600 rounded-lg"><i data-lucide="bell" class="w-6 h-6"></i></div>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between col-span-2 md:col-span-1">
+                <div>
+                    <div class="text-xs text-slate-500 font-medium">已安全離班</div>
+                    <div class="text-2xl font-bold text-slate-500">{{ countStatus('已離班') }} 人</div>
+                </div>
+                <div class="p-2.5 bg-slate-100 text-slate-600 rounded-lg"><i data-lucide="log-out" class="w-6 h-6"></i></div>
+            </div>
+        </div>
+
+        <!-- Left Column: Talent Pickup Timeline & Class Tools (4 cols) -->
+        <div class="lg:col-span-4 space-y-6">
+            
+            <!-- Talent Pickup Schedule (才藝班接送專區) -->
+            <div class="bg-white rounded-xl shadow-sm border border-purple-200 p-4 relative overflow-hidden">
+                <div class="absolute top-0 left-0 right-0 h-1 bg-purple-500"></div>
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center space-x-2">
+                        <i data-lucide="clock" class="w-5 h-5 text-purple-600"></i>
+                        <h2 class="font-bold text-slate-800 text-lg">才藝班接送時間表</h2>
+                    </div>
+                    <span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">今日排程</span>
+                </div>
+
+                <div v-if="talentSchedules.length === 0" class="text-center py-6 text-slate-400 text-sm">
+                    今日無才藝班接送行程
+                </div>
+
+                <div v-else class="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                    <div v-for="item in sortedTalentSchedules" :key="item.id" 
+                         class="p-3 rounded-lg border flex flex-col gap-2 transition"
+                         :class="item.completed ? 'bg-slate-50 border-slate-200 opacity-60' : 'bg-purple-50/50 border-purple-200 hover:border-purple-300'">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xs font-bold px-2 py-0.5 rounded bg-purple-600 text-white shadow-sm">
+                                    {{ item.time }}
+                                </span>
+                                <span class="font-bold text-slate-800">{{ item.studentName }}</span>
+                                <span class="text-xs text-slate-500">({{ item.schoolClass }})</span>
+                            </div>
+                            <button @click="toggleTalentComplete(item)" 
+                                    class="text-xs px-2 py-1 rounded transition flex items-center gap-1"
+                                    :class="item.completed ? 'bg-slate-200 text-slate-600' : 'bg-purple-600 text-white hover:bg-purple-700'">
+                                <i :data-lucide="item.completed ? 'check-circle' : 'circle'" class="w-3.5 h-3.5"></i>
+                                {{ item.completed ? '已完成接送' : '待接送' }}
+                            </button>
+                        </div>
+                        <div class="text-xs text-slate-600 flex items-center justify-between border-t border-purple-100 pt-2 mt-1">
+                            <div><strong class="text-purple-800">課程：</strong>{{ item.className }}</div>
+                            <div><strong class="text-purple-800">帶隊/接送老師：</strong>{{ item.teacher || '未指定' }}</div>
+                        </div>
+                        <div v-if="item.note" class="text-xs text-amber-700 bg-amber-50 p-1.5 rounded">
+                            📌 備註：{{ item.note }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Parent Special Reminders / Notes -->
+            <div class="bg-white rounded-xl shadow-sm border border-amber-200 p-4 relative">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center space-x-2">
+                        <i data-lucide="clipboard-list" class="w-5 h-5 text-amber-600"></i>
+                        <h2 class="font-bold text-slate-800 text-lg">家長叮嚀 / 交代事項</h2>
+                    </div>
+                    <button @click="openModal('addReminder')" class="text-xs text-amber-700 hover:text-amber-800 font-semibold flex items-center gap-0.5">
+                        <i data-lucide="plus" class="w-3.5 h-3.5"></i> 新增
+                    </button>
+                </div>
+
+                <div v-if="reminders.length === 0" class="text-center py-6 text-slate-400 text-sm">
+                    目前沒有家長特別交代事項
+                </div>
+
+                <div v-else class="space-y-2 max-h-[250px] overflow-y-auto">
+                    <div v-for="r in reminders" :key="r.id" 
+                         class="p-2.5 rounded-lg border text-xs flex items-start justify-between gap-2"
+                         :class="r.done ? 'bg-slate-50 border-slate-200 text-slate-400 line-through' : 'bg-amber-50 border-amber-200 text-slate-700'">
+                        <div class="flex items-start space-x-2">
+                            <input type="checkbox" v-model="r.done" @change="saveData" class="mt-0.5 rounded text-amber-600 focus:ring-amber-500">
+                            <div>
+                                <span class="font-bold text-amber-900 mr-1">[{{ r.studentName }}]</span>
+                                <span>{{ r.content }}</span>
+                                <span v-if="r.time" class="block text-[11px] text-amber-600 font-semibold mt-0.5">⏰ 提醒時間：{{ r.time }}</span>
+                            </div>
+                        </div>
+                        <button @click="deleteReminder(r.id)" class="text-slate-400 hover:text-rose-500">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Teacher Toolkit: Random Picker & Timer -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+                <div class="flex items-center space-x-2 mb-3">
+                    <i data-lucide="wrench" class="w-5 h-5 text-indigo-600"></i>
+                    <h2 class="font-bold text-slate-800 text-lg">課堂隨手工具箱</h2>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <!-- Random Picker -->
+                    <div class="p-3 bg-indigo-50/60 rounded-lg border border-indigo-100 flex flex-col items-center justify-center text-center">
+                        <div class="text-xs font-bold text-indigo-900 mb-1">隨機抽籤器</div>
+                        <div class="text-lg font-black text-indigo-700 my-1 min-h-[28px] flex items-center">
+                            {{ pickedStudent || '點擊抽籤' }}
+                        </div>
+                        <button @click="pickRandomStudent" class="mt-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded shadow transition">
+                            幸運抽籤
+                        </button>
+                    </div>
+
+                    <!-- Classroom Countdown Timer -->
+                    <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 flex flex-col items-center justify-center text-center">
+                        <div class="text-xs font-bold text-slate-700 mb-1">專注/限時計時器</div>
+                        <div class="text-xl font-mono font-bold text-slate-800 my-1">
+                            {{ formatTime(timerSeconds) }}
+                        </div>
+                        <div class="flex items-center space-x-1 mt-1">
+                            <button @click="toggleTimer" class="px-2 py-0.5 text-xs font-bold rounded text-white" :class="timerRunning ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'">
+                                {{ timerRunning ? '暫停' : '開始' }}
+                            </button>
+                            <button @click="resetTimer" class="px-2 py-0.5 text-xs font-bold bg-slate-300 hover:bg-slate-400 text-slate-700 rounded">
+                                重置
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Right Column: Main Student Cards Grid (8 cols) -->
+        <div class="lg:col-span-8 space-y-4">
+            
+            <!-- Filter & Search Bar -->
+            <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center space-x-2 flex-1 min-w-[200px]">
+                    <i data-lucide="search" class="w-4 h-4 text-slate-400"></i>
+                    <input type="text" v-model="searchQuery" placeholder="搜尋學生姓名或學校..." class="w-full text-sm border-none focus:outline-none bg-transparent">
+                </div>
+
+                <div class="flex items-center space-x-2 text-xs">
+                    <span class="text-slate-500 font-medium">狀態篩選：</span>
+                    <select v-model="filterStatus" class="border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                        <option value="全部">全部狀態</option>
+                        <option value="未到班">未到班</option>
+                        <option value="已到班">已到班</option>
+                        <option value="寫作業中">寫作業中</option>
+                        <option value="才藝班中">才藝班中</option>
+                        <option value="已離班">已離班</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Student List Grid -->
+            <div v-if="filteredStudents.length === 0" class="bg-white p-12 rounded-xl text-center text-slate-400 border border-slate-200">
+                <i data-lucide="user-x" class="w-12 h-12 mx-auto mb-2 text-slate-300"></i>
+                <p>找不到符合條件的學生資料</p>
+            </div>
+
+            <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div v-for="s in filteredStudents" :key="s.id" 
+                     class="bg-white rounded-xl shadow-sm border transition hover:shadow-md flex flex-col justify-between overflow-hidden"
+                     :class="getCardBorderClass(s.status)">
+                    
+                    <!-- Student Card Header -->
+                    <div class="p-4 pb-3 border-b border-slate-100 bg-slate-50/50">
+                        <div class="flex items-start justify-between">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-lg shadow-inner">
+                                    {{ s.name.charAt(0) }}
+                                </div>
+                                <div>
+                                    <div class="flex items-center space-x-2">
+                                        <h3 class="font-bold text-slate-800 text-base">{{ s.name }}</h3>
+                                        <span class="text-xs px-2 py-0.5 rounded font-medium" :class="getStatusBadgeClass(s.status)">
+                                            {{ s.status }}
+                                        </span>
+                                    </div>
+                                    <p class="text-xs text-slate-500 mt-0.5">{{ s.school }} | {{ s.grade }}年級</p>
+                                </div>
+                            </div>
+
+                            <!-- Point Management -->
+                            <div class="flex items-center bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 space-x-1">
+                                <i data-lucide="star" class="w-3.5 h-3.5 text-amber-500 fill-amber-500"></i>
+                                <span class="font-bold text-xs text-amber-800">{{ s.points }}pt</span>
+                                <button @click="changePoints(s, 1)" class="w-4 h-4 rounded bg-amber-200 hover:bg-amber-300 text-amber-800 text-xs font-bold flex items-center justify-center">+ </button>
+                                <button @click="changePoints(s, -1)" class="w-4 h-4 rounded bg-amber-200 hover:bg-amber-300 text-amber-800 text-xs font-bold flex items-center justify-center">-</button>
+                            </div>
+                        </div>
+
+                        <!-- Status Switch Buttons -->
+                        <div class="mt-3 flex items-center gap-1 text-xs">
+                            <button v-for="st in statusOptions" :key="st"
+                                    @click="setStatus(s, st)"
+                                    class="px-2 py-1 rounded transition text-[11px] font-medium"
+                                    :class="s.status === st ? getStatusBtnActive(st) : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'">
+                                {{ st }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Homework Checklist -->
+                    <div class="p-4 space-y-3 flex-1">
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs font-bold text-slate-700 flex items-center gap-1">
+                                    <i data-lucide="book-open" class="w-3.5 h-3.5 text-indigo-600"></i> 今日學校作業
+                                </span>
+                                <button @click="addHomeworkItem(s)" class="text-[11px] text-indigo-600 hover:underline font-semibold">+ 新增作業</button>
+                            </div>
+                            
+                            <div v-if="!s.homeworks || s.homeworks.length === 0" class="text-xs text-slate-400 italic py-1">
+                                尚無登記作業
+                            </div>
+                            
+                            <div v-else class="space-y-1.5">
+                                <div v-for="(hw, idx) in s.homeworks" :key="idx" class="flex items-center justify-between text-xs bg-slate-50 p-1.5 rounded border border-slate-100">
+                                    <span class="font-medium text-slate-700 flex-1 truncate pr-2">{{ hw.title }}</span>
+                                    <div class="flex items-center space-x-1">
+                                        <!-- Completed / Corrected Status Pills -->
+                                        <button @click="toggleHwState(hw, 'done')" 
+                                                class="px-1.5 py-0.5 text-[10px] rounded font-semibold transition"
+                                                :class="hw.done ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'">
+                                            完成
+                                        </button>
+                                        <button @click="toggleHwState(hw, 'corrected')" 
+                                                class="px-1.5 py-0.5 text-[10px] rounded font-semibold transition"
+                                                :class="hw.corrected ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600'">
+                                            訂正
+                                        </button>
+                                        <button @click="s.homeworks.splice(idx, 1); saveData();" class="text-slate-300 hover:text-rose-500 ml-1">
+                                            <i data-lucide="x" class="w-3 h-3"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Talent Class Info Badge on Card -->
+                        <div v-if="s.talentClasses && s.talentClasses.length > 0" class="pt-2 border-t border-slate-100">
+                            <span class="text-xs font-bold text-purple-800 flex items-center gap-1 mb-1">
+                                <i data-lucide="music" class="w-3.5 h-3.5 text-purple-600"></i> 才藝班報名項
+                            </span>
+                            <div class="space-y-1">
+                                <div v-for="tc in s.talentClasses" :key="tc.id" class="text-xs bg-purple-50 text-purple-900 p-1.5 rounded border border-purple-100 flex items-center justify-between">
+                                    <div>
+                                        <span class="font-bold">{{ tc.name }}</span> ({{ tc.pickupTime }})
+                                        <span class="text-[10px] text-purple-600 block">接送老師: {{ tc.pickupTeacher || '未指定' }}</span>
+                                    </div>
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded" :class="tc.completedToday ? 'bg-emerald-100 text-emerald-800' : 'bg-purple-200 text-purple-800'">
+                                        {{ tc.completedToday ? '已完成' : '待接送' }}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card Footer Actions -->
+                    <div class="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <span class="text-slate-400">家長接送：{{ s.parentPickupTime || '常規' }}</span>
+                        <div class="flex items-center space-x-2">
+                            <button @click="editStudent(s)" class="text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-0.5">
+                                <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> 編輯
+                            </button>
+                            <button @click="deleteStudent(s.id)" class="text-rose-500 hover:text-rose-700 font-medium flex items-center gap-0.5">
+                                <i data-lucide="trash" class="w-3.5 h-3.5"></i> 刪除
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Modal: Add / Edit Student -->
+    <div v-if="showModal === 'addStudent' || showModal === 'editStudent'" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b pb-3">
+                <h3 class="font-bold text-slate-800 text-lg">{{ showModal === 'addStudent' ? '新增學生資料' : '編輯學生資料' }}</h3>
+                <button @click="closeModal" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+
+            <div class="space-y-3 text-sm">
+                <div>
+                    <label class="block font-medium text-slate-700 mb-1">學生姓名 *</label>
+                    <input type="text" v-model="formStudent.name" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1">就讀學校</label>
+                        <input type="text" v-model="formStudent.school" placeholder="例如：大安國小" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1">年級</label>
+                        <select v-model="formStudent.grade" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none bg-white">
+                            <option value="一">一年級</option>
+                            <option value="二">二年級</option>
+                            <option value="三">三年級</option>
+                            <option value="四">四年級</option>
+                            <option value="五">五年級</option>
+                            <option value="六">六年級</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-medium text-slate-700 mb-1">家長預計接送時間</label>
+                    <input type="text" v-model="formStudent.parentPickupTime" placeholder="例如：18:00 家長自接" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none">
+                </div>
+
+                <!-- Talent Classes Setup -->
+                <div class="pt-2 border-t border-slate-100">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="font-bold text-purple-900">才藝班項目 (英文/游泳/音樂等)</label>
+                        <button @click="addTalentToForm" type="button" class="text-xs text-purple-700 font-semibold hover:underline">+ 新增才藝班</button>
+                    </div>
+
+                    <div v-for="(tc, i) in formStudent.talentClasses" :key="i" class="p-3 bg-purple-50 rounded-lg border border-purple-200 space-y-2 mb-2 text-xs">
+                        <div class="grid grid-cols-2 gap-2">
+                            <input type="text" v-model="tc.name" placeholder="課程名稱 (例如：英檢/游泳)" class="border rounded p-1.5">
+                            <input type="time" v-model="tc.pickupTime" class="border rounded p-1.5">
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input type="text" v-model="tc.pickupTeacher" placeholder="負責帶隊/接送老師" class="border rounded p-1.5">
+                            <input type="text" v-model="tc.note" placeholder="備註 (如：需帶泳具)" class="border rounded p-1.5">
+                        </div>
+                        <button @click="formStudent.talentClasses.splice(i, 1)" type="button" class="text-rose-500 hover:underline text-[11px]">刪除此才藝班</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end space-x-2 pt-3 border-t">
+                <button @click="closeModal" class="px-4 py-2 border rounded-lg text-slate-600 hover:bg-slate-100 text-sm">取消</button>
+                <button @click="saveStudentForm" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm shadow">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Add Reminder -->
+    <div v-if="showModal === 'addReminder'" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div class="flex items-center justify-between border-b pb-3">
+                <h3 class="font-bold text-slate-800 text-lg">新增家長叮嚀 / 交代事項</h3>
+                <button @click="closeModal" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+
+            <div class="space-y-3 text-sm">
+                <div>
+                    <label class="block font-medium text-slate-700 mb-1">對應學生</label>
+                    <select v-model="formReminder.studentName" class="w-full border rounded-lg p-2 bg-white">
+                        <option value="全班">全班廣播 / 通用</option>
+                        <option v-for="s in students" :key="s.id" :value="s.name">{{ s.name }} ({{ s.school }})</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-700 mb-1">叮嚀內容</label>
+                    <textarea v-model="formReminder.content" placeholder="例如：16:30 需吃感冒藥包、阿嬤會提早4:30來接..." class="w-full border rounded-lg p-2 h-20 outline-none"></textarea>
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-700 mb-1">提醒時間 (選填)</label>
+                    <input type="time" v-model="formReminder.time" class="w-full border rounded-lg p-2">
+                </div>
+            </div>
+
+            <div class="flex justify-end space-x-2 pt-3 border-t">
+                <button @click="closeModal" class="px-4 py-2 border rounded-lg text-slate-600 hover:bg-slate-100 text-sm">取消</button>
+                <button @click="saveReminderForm" class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-sm shadow">新增叮嚀</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+    data() {
+        return {
+            todayDate: new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }),
+            searchQuery: '',
+            filterStatus: '全部',
+            showModal: null, // 'addStudent', 'editStudent', 'addReminder'
+            
+            // Status Options
+            statusOptions: ['未到班', '已到班', '寫作業中', '才藝班中', '已離班'],
+            
+            // Random Picker & Timer
+            pickedStudent: '',
+            timerSeconds: 1500, // 25 mins
+            timerRunning: false,
+            timerInterval: null,
+
+            // Core Data
+            students: [],
+            reminders: [],
+
+            // Form States
+            formStudent: {
+                id: null,
+                name: '',
+                school: '',
+                grade: '一',
+                status: '未到班',
+                points: 0,
+                parentPickupTime: '',
+                homeworks: [],
+                talentClasses: []
+            },
+            formReminder: {
+                studentName: '全班',
+                content: '',
+                time: '',
+                done: false
+            }
+        }
+    },
+    computed: {
+        filteredStudents() {
+            return this.students.filter(s => {
+                const matchQuery = s.name.includes(this.searchQuery) || s.school.includes(this.searchQuery);
+                const matchStatus = this.filterStatus === '全部' || s.status === this.filterStatus;
+                return matchQuery && matchStatus;
+            });
+        },
+        talentSchedules() {
+            let list = [];
+            this.students.forEach(s => {
+                if (s.talentClasses && s.talentClasses.length > 0) {
+                    s.talentClasses.forEach(tc => {
+                        list.push({
+                            id: tc.id || (s.id + tc.name),
+                            studentId: s.id,
+                            studentName: s.name,
+                            schoolClass: `${s.school} ${s.grade}年`,
+                            className: tc.name,
+                            time: tc.pickupTime || '未定',
+                            teacher: tc.pickupTeacher || '',
+                            note: tc.note || '',
+                            completed: tc.completedToday || false,
+                            refObject: tc
+                        });
+                    });
+                }
+            });
+            return list;
+        },
+        sortedTalentSchedules() {
+            return [...this.talentSchedules].sort((a, b) => (a.time > b.time ? 1 : -1));
+        },
+        totalTalentClassesToday() {
+            return this.talentSchedules.length;
+        },
+        pendingReminders() {
+            return this.reminders.filter(r => !r.done);
+        }
+    },
+    mounted() {
+        this.loadData();
+        this.$nextTick(() => {
+            if (window.lucide) lucide.createIcons();
+        });
+    },
+    updated() {
+        this.$nextTick(() => {
+            if (window.lucide) lucide.createIcons();
+        });
+    },
+    methods: {
+        loadData() {
+            const localS = localStorage.getItem('care_class_students');
+            const localR = localStorage.getItem('care_class_reminders');
+
+            if (localS) {
+                this.students = JSON.parse(localS);
+            } else {
+                // Preset Default Sample Data
+                this.students = [
+                    {
+                        id: 's1',
+                        name: '陳小明',
+                        school: '大安國小',
+                        grade: '二',
+                        status: '寫作業中',
+                        points: 5,
+                        parentPickupTime: '18:30 家長接',
+                        homeworks: [
+                            { title: '國語習作 P.12-14', done: true, corrected: true },
+                            { title: '數學評量 第3單元', done: true, corrected: false }
+                        ],
+                        talentClasses: [
+                            { id: 'tc1', name: '兒童美語', pickupTime: '16:30', pickupTeacher: '王老師', note: '帶美語課本', completedToday: false }
+                        ]
+                    },
+                    {
+                        id: 's2',
+                        name: '林雅婷',
+                        school: '建國國小',
+                        grade: '三',
+                        status: '已到班',
+                        points: 8,
+                        parentPickupTime: '17:30',
+                        homeworks: [
+                            { title: '英語單字抄寫', done: false, corrected: false },
+                            { title: '自然學習單', done: false, corrected: false }
+                        ],
+                        talentClasses: [
+                            { id: 'tc2', name: '游泳課', pickupTime: '15:30', pickupTeacher: '張教練接送車', note: '自備大毛巾泳帽', completedToday: true }
+                        ]
+                    },
+                    {
+                        id: 's3',
+                        name: '張家豪',
+                        school: '大安國小',
+                        grade: '一',
+                        status: '未到班',
+                        points: 3,
+                        parentPickupTime: '18:00',
+                        homeworks: [
+                            { title: '生字本 (二)', done: false, corrected: false }
+                        ],
+                        talentClasses: []
+                    }
+                ];
+                this.saveData();
+            }
+
+            if (localR) {
+                this.reminders = JSON.parse(localR);
+            } else {
+                this.reminders = [
+                    { id: 'r1', studentName: '陳小明', content: '16:30 需吃包感冒藥，開水微溫', time: '16:30', done: false },
+                    { id: 'r2', studentName: '林雅婷', content: '媽媽交代今天游泳完直接在安親班換乾衣服', time: '', done: false }
+                ];
+                this.saveData();
+            }
+        },
+        saveData() {
+            localStorage.setItem('care_class_students', JSON.stringify(this.students));
+            localStorage.setItem('care_class_reminders', JSON.stringify(this.reminders));
+        },
+        countStatus(status) {
+            return this.students.filter(s => s.status === status).length;
+        },
+        setStatus(student, status) {
+            student.status = status;
+            this.saveData();
+        },
+        changePoints(student, delta) {
+            student.points = Math.max(0, student.points + delta);
+            this.saveData();
+        },
+        toggleHwState(hw, field) {
+            hw[field] = !hw[field];
+            this.saveData();
+        },
+        addHomeworkItem(student) {
+            const title = prompt('請輸入作業名稱 (例如：數學習作 P.10)：');
+            if (title && title.trim()) {
+                if (!student.homeworks) student.homeworks = [];
+                student.homeworks.push({ title: title.trim(), done: false, corrected: false });
+                this.saveData();
+            }
+        },
+        toggleTalentComplete(scheduleItem) {
+            scheduleItem.refObject.completedToday = !scheduleItem.refObject.completedToday;
+            this.saveData();
+        },
+        // Modal Open / Close
+        openModal(type) {
+            this.showModal = type;
+            if (type === 'addStudent') {
+                this.formStudent = {
+                    id: Date.now().toString(),
+                    name: '',
+                    school: '',
+                    grade: '一',
+                    status: '未到班',
+                    points: 0,
+                    parentPickupTime: '',
+                    homeworks: [],
+                    talentClasses: []
+                };
+            }
+        },
+        editStudent(student) {
+            this.formStudent = JSON.parse(JSON.stringify(student));
+            this.showModal = 'editStudent';
+        },
+        closeModal() {
+            this.showModal = null;
+        },
+        addTalentToForm() {
+            if (!this.formStudent.talentClasses) this.formStudent.talentClasses = [];
+            this.formStudent.talentClasses.push({
+                id: 'tc_' + Date.now(),
+                name: '',
+                pickupTime: '16:00',
+                pickupTeacher: '',
+                note: '',
+                completedToday: false
+            });
+        },
+        saveStudentForm() {
+            if (!this.formStudent.name.trim()) {
+                alert('請輸入學生姓名！');
+                return;
+            }
+            if (this.showModal === 'addStudent') {
+                this.students.push(this.formStudent);
+            } else {
+                const idx = this.students.findIndex(s => s.id === this.formStudent.id);
+                if (idx !== -1) this.students[idx] = this.formStudent;
+            }
+            this.saveData();
+            this.closeModal();
+        },
+        deleteStudent(id) {
+            if (confirm('確定要刪除這位學生嗎？')) {
+                this.students = this.students.filter(s => s.id !== id);
+                this.saveData();
+            }
+        },
+        saveReminderForm() {
+            if (!this.formReminder.content.trim()) {
+                alert('請輸入叮嚀內容！');
+                return;
+            }
+            this.reminders.unshift({
+                id: 'r_' + Date.now(),
+                studentName: this.formReminder.studentName,
+                content: this.formReminder.content,
+                time: this.formReminder.time,
+                done: false
+            });
+            this.saveData();
+            this.formReminder.content = '';
+            this.formReminder.time = '';
+            this.closeModal();
+        },
+        deleteReminder(id) {
+            this.reminders = this.reminders.filter(r => r.id !== id);
+            this.saveData();
+        },
+        // Toolkit Logic
+        pickRandomStudent() {
+            const activeStudents = this.students.filter(s => s.status !== '已離班' && s.status !== '未到班');
+            const targetList = activeStudents.length > 0 ? activeStudents : this.students;
+            if (targetList.length === 0) return;
+
+            let count = 0;
+            const interval = setInterval(() => {
+                const randIndex = Math.floor(Math.random() * targetList.length);
+                this.pickedStudent = targetList[randIndex].name;
+                count++;
+                if (count > 15) clearInterval(interval);
+            }, 80);
+        },
+        toggleTimer() {
+            if (this.timerRunning) {
+                clearInterval(this.timerInterval);
+                this.timerRunning = false;
+            } else {
+                this.timerRunning = true;
+                this.timerInterval = setInterval(() => {
+                    if (this.timerSeconds > 0) {
+                        this.timerSeconds--;
+                    } else {
+                        clearInterval(this.timerInterval);
+                        this.timerRunning = false;
+                        alert('⏰ 課堂計時結束！');
+                    }
+                }, 1000);
+            }
+        },
+        resetTimer() {
+            clearInterval(this.timerInterval);
+            this.timerRunning = false;
+            this.timerSeconds = 1500;
+        },
+        formatTime(seconds) {
+            const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const s = (seconds % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+        },
+        // Card Theme Utility
+        getCardBorderClass(status) {
+            switch (status) {
+                case '寫作業中': return 'border-indigo-300 ring-1 ring-indigo-100';
+                case '才藝班中': return 'border-purple-300 bg-purple-50/20';
+                case '已離班': return 'border-slate-200 opacity-60';
+                case '已到班': return 'border-emerald-200';
+                default: return 'border-slate-200';
+            }
+        },
+        getStatusBadgeClass(status) {
+            switch (status) {
+                case '已到班': return 'bg-emerald-100 text-emerald-800';
+                case '寫作業中': return 'bg-indigo-100 text-indigo-800';
+                case '才藝班中': return 'bg-purple-100 text-purple-800';
+                case '已離班': return 'bg-slate-200 text-slate-700';
+                default: return 'bg-rose-100 text-rose-800';
+            }
+        },
+        getStatusBtnActive(status) {
+            switch (status) {
+                case '已到班': return 'bg-emerald-600 text-white font-bold';
+                case '寫作業中': return 'bg-indigo-600 text-white font-bold';
+                case '才藝班中': return 'bg-purple-600 text-white font-bold';
+                case '已離班': return 'bg-slate-600 text-white font-bold';
+                default: return 'bg-rose-600 text-white font-bold';
+            }
+        },
+        // Backup Export & Import
+        exportData() {
+            const data = {
+                students: this.students,
+                reminders: this.reminders,
+                exportedAt: new Date().toISOString()
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `安親班資料備份_${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+        },
+        importData(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const parsed = JSON.parse(event.target.result);
+                    if (parsed.students && parsed.reminders) {
+                        this.students = parsed.students;
+                        this.reminders = parsed.reminders;
+                        this.saveData();
+                        alert('資料還原成功！');
+                    } else {
+                        alert('檔案格式不正確！');
+                    }
+                } catch (err) {
+                    alert('JSON 檔案解析失敗');
+                }
+            };
+            reader.readAsText(file);
+        }
+    }
+}).mount('#app');
+</script>
+</body>
+</html>
+'''
+
+with open("index.html", "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print("index.html successfully created.")
